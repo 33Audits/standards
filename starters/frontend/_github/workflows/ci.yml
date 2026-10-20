@@ -1,0 +1,17 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    uses: 33Audits/standards/.github/workflows/frontend-ci.yml@v1
+    permissions:
+      contents: read
+      packages: read

@@ -1,0 +1,2 @@
+# Secrets only: the one mistake an amend cannot undo. Keep this under a second.
+npx --no -- 33labs-standards guard-secrets --staged

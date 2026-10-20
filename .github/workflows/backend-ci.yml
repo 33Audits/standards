@@ -1,0 +1,92 @@
+name: backend-ci
+
+# Called from each NestJS repo:
+#   jobs:
+#     ci:
+#       uses: 33Audits/standards/.github/workflows/backend-ci.yml@v1
+on:
+  workflow_call:
+    inputs:
+      check-migrations:
+        description: "Fail when prisma/schema.prisma has changes with no migration."
+        type: boolean
+        default: true
+      supabase-roles:
+        description: "Create Supabase's anon/authenticated/service_role before replaying migrations."
+        type: boolean
+        default: true
+
+# The caller must grant the same: `permissions: { contents: read, packages: read }`.
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # postinstall runs `prisma generate`, which tsc needs. No database required.
+      - run: npm ci
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm run verify
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm run build
+
+  migrations:
+    if: inputs.check-migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # RLS migrations grant against Supabase's built-in roles; stock Postgres lacks them.
+      - name: Create Supabase roles
+        if: inputs.supabase-roles
+        run: |
+          psql "$SHADOW_DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE ROLE service_role NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          SQL
+      - name: Schema must match the migration history
+        run: |
+          npx prisma migrate diff --from-migrations prisma/migrations \
+            --to-schema prisma/schema.prisma --exit-code || {
+            status=$?
+            [ "$status" = 2 ] && echo "::error::schema.prisma has changes with no matching migration."
+            exit "$status"
+          }

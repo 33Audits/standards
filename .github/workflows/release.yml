@@ -1,0 +1,37 @@
+name: release
+
+# Push a tag like v1.2.0 to publish. The tag must match package.json's version.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write # move the major tag
+  packages: write # publish to GitHub Packages
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: "@33audits"
+
+      - name: Tag must match package.json
+        run: |
+          version=$(node -p "require('./package.json').version")
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but package.json says $version"; exit 1; }
+
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Product repos call the shared workflows at @v1, so v1 must follow the latest v1.x.y.
+      - name: Move the major tag
+        run: |
+          major="${GITHUB_REF_NAME%%.*}"
+          git tag -f "$major"
+          git push -f origin "refs/tags/$major"

@@ -1,0 +1,58 @@
+name: frontend-ci
+
+# Called from each Next.js repo:
+#   jobs:
+#     ci:
+#       uses: 33Audits/standards/.github/workflows/frontend-ci.yml@v1
+#       with:
+#         build-env: |
+#           NEXT_PUBLIC_SUPABASE_URL=https://ci-placeholder.supabase.co
+on:
+  workflow_call:
+    inputs:
+      build-env:
+        description: "KEY=value lines for next build. Placeholders only, never secrets."
+        type: string
+        default: ""
+
+# The caller must grant the same: `permissions: { contents: read, packages: read }`.
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Same command as the pre-push hook, so local and CI cannot disagree.
+      - run: npm run verify
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: next-${{ runner.os }}-
+      - name: Load build env
+        env:
+          BUILD_ENV: ${{ inputs.build-env }}
+        run: printf '%s\n' "$BUILD_ENV" | grep -v '^\s*$' >> "$GITHUB_ENV" || true
+      - run: npm run build
